@@ -28,29 +28,11 @@ BUTTON2_TEXT = "USDT TRC20"
 BUTTON3_TEXT = "Отмена"
 BUTTON4_TEXT = "Я оплатил✅"
 BUTTON5_TEXT = "Оплатить со скидкой 50%%"
-BUTTON6_TEXT = "✅ Подтвердить оплату"
-BUTTON7_TEXT = "❌ Отклонить"
 
 bot = telebot.TeleBot(TOKEN)
 user_messages = {}
 user_waiting_for_screenshot = set()
-users_with_guide = set()  # ID пользователей, которые уже получили гайд
 
-# ===== Функция отправки гайда =====
-def send_guide(chat_id):
-    if chat_id in users_with_guide:
-        bot.send_message(chat_id, "📘 Вы уже получали гайд. Если не пришёл — напишите в поддержку.")
-        return
-    
-    try:
-        with open('guide.pdf', 'rb') as file:
-            bot.send_document(chat_id, file, caption=TEXT5)
-            users_with_guide.add(chat_id)
-    except FileNotFoundError:
-        bot.send_message(ADMIN_ID, "❌ Файл guide.pdf не найден на сервере!")
-        bot.send_message(chat_id, "❌ Произошла ошибка при отправке гайда. Свяжитесь с поддержкой.")
-
-# ===== Вспомогательные функции =====
 def delete_previous_messages(chat_id):
     if chat_id in user_messages:
         for msg_id in user_messages[chat_id]:
@@ -65,7 +47,15 @@ def save_message_id(chat_id, message_id):
         user_messages[chat_id] = []
     user_messages[chat_id].append(message_id)
 
-# ==================== СЦЕНАРИЙ ====================
+def send_guide(chat_id):
+    try:
+        with open('guide.pdf', 'rb') as file:
+            bot.send_document(chat_id, file, caption=TEXT5)
+            print(f"✅ Гайд отправлен пользователю {chat_id}")
+    except Exception as e:
+        bot.send_message(ADMIN_ID, f"❌ Ошибка отправки гайда: {e}")
+        bot.send_message(chat_id, "❌ Ошибка при отправке гайда. Свяжитесь с поддержкой.")
+
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     chat_id = message.chat.id
@@ -158,30 +148,35 @@ def callback_handler(call):
         save_message_id(chat_id, msg4.message_id)
         bot.answer_callback_query(call.id)
 
-    # ===== Обработка кнопок админа для подтверждения оплаты =====
     elif call.data.startswith("approve_"):
         user_id = int(call.data.split("_")[1])
         send_guide(user_id)
-        bot.edit_message_caption(
-            chat_id=chat_id,
-            message_id=message_id,
-            caption=call.message.caption + "\n\n✅ Оплата подтверждена, гайд отправлен."
-        )
+        try:
+            bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=call.message.caption + "\n\n✅ Оплата подтверждена, гайд отправлен."
+            )
+        except:
+            pass
         bot.answer_callback_query(call.id, "Гайд отправлен!")
 
     elif call.data.startswith("reject_"):
         user_id = int(call.data.split("_")[1])
         bot.send_message(user_id, TEXT6)
-        bot.edit_message_caption(
-            chat_id=chat_id,
-            message_id=message_id,
-            caption=call.message.caption + "\n\n❌ Оплата отклонена."
-        )
+        try:
+            bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=call.message.caption + "\n\n❌ Оплата отклонена."
+            )
+        except:
+            pass
         bot.answer_callback_query(call.id, "Пользователь уведомлен")
 
-# ===== Обработка скриншотов =====
 @bot.message_handler(content_types=['photo'])
 def handle_screenshot(message):
+    print(f"📸 Получено фото от {message.chat.id}")
     chat_id = message.chat.id
 
     if chat_id == ADMIN_ID:
@@ -189,13 +184,12 @@ def handle_screenshot(message):
         return
 
     if chat_id in user_waiting_for_screenshot:
-        # Отправляем скриншот админу с кнопками
         caption = f"🖼 Скриншот оплаты от {message.from_user.first_name} (@{message.from_user.username}) [ID:{chat_id}]"
         
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton(BUTTON6_TEXT, callback_data=f"approve_{chat_id}"),
-            types.InlineKeyboardButton(BUTTON7_TEXT, callback_data=f"reject_{chat_id}")
+            types.InlineKeyboardButton("✅ Подтвердить оплату", callback_data=f"approve_{chat_id}"),
+            types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{chat_id}")
         )
         
         bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=caption, reply_markup=markup)
@@ -204,13 +198,11 @@ def handle_screenshot(message):
     else:
         bot.forward_message(ADMIN_ID, chat_id, message.message_id)
 
-# ===== Пересылка текста админу =====
 @bot.message_handler(func=lambda message: message.chat.id != ADMIN_ID and message.text)
 def forward_text(message):
     sign = f"✉️ От {message.from_user.first_name} (@{message.from_user.username}) [ID:{message.chat.id}]"
     bot.send_message(ADMIN_ID, f"{sign}\n\n{message.text}")
 
-# ===== Команда для ответа пользователю =====
 @bot.message_handler(commands=['send'], func=lambda message: message.chat.id == ADMIN_ID)
 def send_to_user(message):
     try:
@@ -230,7 +222,6 @@ def send_to_user(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Ошибка: {e}")
 
-# ===== АДМИН-КОМАНДА ДЛЯ СКИДКИ =====
 @bot.message_handler(commands=['discount'], func=lambda message: message.chat.id == ADMIN_ID)
 def send_discount_to_user(message):
     try:
